@@ -1,4 +1,4 @@
-'''
+''''
 Copyright (c) 2012-2014, Agora Games, LLC All rights reserved.
 
 https://github.com/agoragames/kairos/blob/master/LICENSE.txt
@@ -287,6 +287,7 @@ class Timeseries(object):
 
   def __new__(cls, client, **kwargs):
     if cls==Timeseries:
+
       # load a backend based on the name of the client module
       client_module = client.__module__.split('.')[0]
       backend = BACKENDS.get( client_module )
@@ -297,6 +298,7 @@ class Timeseries(object):
     return object.__new__(cls, client, **kwargs)
 
   def __init__(self, client, **kwargs):
+
     '''
     Create a time series using a given redis client and keyword arguments
     defining the series configuration.
@@ -365,6 +367,12 @@ class Timeseries(object):
     self._read_func = kwargs.get('read_func',None)
     self._write_func = kwargs.get('write_func',None)
     self._intervals = kwargs.get('intervals', {})
+    
+
+    if 'indexer' in kwargs:
+        self._indexer = kwargs.get('indexer')
+    else:
+        self._indexer = None
 
     # Preprocess the intervals
     for interval,config in self._intervals.items():
@@ -428,6 +436,8 @@ class Timeseries(object):
     perform a single insert for each value, with no specialized locking,
     transactions or batching.
     '''
+
+
     if None in inserts:
       inserts[ time.time() ] = inserts.pop(None)
     if self._write_func:
@@ -452,6 +462,9 @@ class Timeseries(object):
     This supports the public methods of the same name in the subclasses. The
     value is expected to already be converted.
     '''
+    
+
+
     if not timestamp:
       timestamp = time.time()
 
@@ -519,6 +532,9 @@ class Timeseries(object):
       self.delete(name)
 
   def iterate(self, name, interval, **kwargs):
+
+
+
     '''
     Returns a generator that iterates over all the intervals and returns
     data for various timestamps, in the form:
@@ -535,7 +551,9 @@ class Timeseries(object):
     config = self._intervals.get(interval)
     if not config:
       raise UnknownInterval(interval)
-    properties = self.properties(name)[interval]
+
+#    properties = self.properties(name)[interval]
+    properties = self.properties(name, interval = interval )[interval]
 
     i_buckets = config['i_calc'].buckets(properties['first'], properties['last'])
     for i_bucket in i_buckets:

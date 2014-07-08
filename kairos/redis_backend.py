@@ -12,6 +12,7 @@ import time
 import re
 from urlparse import *
 from redis import Redis
+import redis
 
 class RedisBackend(Timeseries):
   '''
@@ -19,6 +20,7 @@ class RedisBackend(Timeseries):
   '''
 
   def __new__(cls, *args, **kwargs):
+
     if cls==RedisBackend:
       ttype = kwargs.pop('type', None)
       if ttype=='series':
@@ -42,6 +44,7 @@ class RedisBackend(Timeseries):
 
     super(RedisBackend,self).__init__( client, **kwargs )
 
+
   @classmethod
   def url_parse(self, url, **kwargs):
     location = urlparse(url)
@@ -61,16 +64,41 @@ class RedisBackend(Timeseries):
     return i_bucket, r_bucket, i_key, r_key
 
   def list(self):
-    keys = self._client.keys()
+
+    keys = []
+    res = self._client.scan()
+    while res[0] != '0':
+        keys += res[1]
+        res = self._client.scan( res[0])
+    keys += res[1]
     rval = set()
     for key in keys:
       key = key[len(self._prefix):]
       rval.add( key.split(':')[0] )
     return list(rval)
 
-  def properties(self, name):
+  def properties(self, name, interval = None, indexer = None ):
+    
     prefix = '%s%s:'%(self._prefix,name)
-    keys = self._client.keys('%s*'%(prefix))
+
+    if interval is not None and self._indexer is not None:
+      keys = []
+      c = self._indexer.getConnection()
+      k = '%s%s'%(prefix,interval)
+      results = c.zrange( k, start = 0, end = -1 )
+      for r in results:
+        keys.append( k + ':' + r )
+    else:
+      keys = []
+      k = '%s*'%(prefix)
+      res = self._client.scan( match = k )
+      while res[0] != '0':
+        if res[1] != []:
+          keys += res[1]
+        res = self._client.scan( res[0], match = k )
+      if res[1] != []:
+        keys += res[1]
+
     rval = {}
 
     for key in keys:
@@ -98,6 +126,7 @@ class RedisBackend(Timeseries):
     return rval
 
   def _batch_insert(self, inserts, intervals, **kwargs):
+
     '''
     Specialized batch insert
     '''
@@ -127,15 +156,16 @@ class RedisBackend(Timeseries):
     else:
       pipe = self._client.pipeline(transaction=False)
 
+
     for interval,config in self._intervals.iteritems():
       timestamps = self._normalize_timestamps(timestamp, intervals, config)
       for tstamp in timestamps:
-        self._insert_data(name, value, tstamp, interval, config, pipe)
+        self._insert_data(name, value, tstamp, interval, config, pipe, indexer = self._indexer )
 
     if 'pipeline' not in kwargs:
       pipe.execute()
 
-  def _insert_data(self, name, value, timestamp, interval, config, pipe):
+  def _insert_data(self, name, value, timestamp, interval, config, pipe, indexer = None):
     '''Helper to insert data into redis'''
     # Calculate the TTL and abort if inserting into the past
     expire, ttl = config['expire'], config['ttl'](timestamp)
@@ -143,6 +173,10 @@ class RedisBackend(Timeseries):
       return
 
     i_bucket, r_bucket, i_key, r_key = self._calc_keys(config, name, timestamp)
+
+
+    if indexer is not None:
+      indexer.addToIndex( i_key )
 
     if config['coarse']:
       self._type_insert(pipe, i_key, value)
@@ -163,7 +197,15 @@ class RedisBackend(Timeseries):
     '''
     Delete all the data in a named timeseries.
     '''
-    keys = self._client.keys('%s%s:*'%(self._prefix,name))
+    #keys = self._client.keys('%s%s:*'%(self._prefix,name))
+    keys = []
+    res = self._client.scan( match = '%s%s:*'%(self._prefix,name))
+    while res[0] != '0':
+        if res[1] != []:
+            keys += res[1]
+        res = self._client.scan( res[0], match = '%s%s:*'%(self._prefix,name))
+    if res[1] != []:
+        keys += res[1]
 
     pipe = self._client.pipeline(transaction=False)
     for key in keys:
